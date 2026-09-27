@@ -104,14 +104,28 @@ async function fetchGeminiModels(apiKey) {
   // Gemini uses query-string key and a different envelope
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}&pageSize=1000`;
   const json = await httpGet(url);
-  // Shape: { models: [ { name: "models/gemini-…", … } ] }
-  // The ID used in generateContent is the part after "models/"
+  // Shape: { models: [ { name: "models/gemini-…", supportedGenerationMethods: [...], … } ] }
+  //
+  // BUGFIX (was throwing ReferenceError on every real call): the previous
+  // version called .filter() AFTER .map() had already reduced each model
+  // object down to a bare id string - by the time the filter ran, the only
+  // thing it had to inspect was `id` (a string), yet it tried to read
+  // `m.supportedGenerationMethods` on a variable `m` that was never in scope
+  // in that callback. This wasn't just a typo to rename; the whole ordering
+  // was backwards. The fix: filter on the full model object FIRST (while
+  // supportedGenerationMethods is still available), THEN map down to the id
+  // string. No IIFE, no scope trick needed - the property we need is simply
+  // read before it's thrown away.
   const list = (json.models || [])
+    .filter(m => {
+      const methods = m.supportedGenerationMethods || m.supported_actions || [];
+      return methods.some(x => /generateContent/i.test(x));
+    })
     .map(m => {
       const name = m.name || '';
+      // The ID used in generateContent is the part after "models/"
       return name.startsWith('models/') ? name.slice(7) : name;
     })
-    .filter(id => id && /generateContent/i.test((m => (m.supportedGenerationMethods || m.supported_actions || []).join(','))(m) || 'generateContent'))
     .filter(Boolean);
   return list;
 }
