@@ -46,7 +46,15 @@ const PREFERENCE = {
   // Prefer flagship grok-*, skip fast / mini / code-fast variants when possible
   xai: {
     include: /^grok-/i,
-    exclude: /fast|mini|lite|code-fast/i,
+    // "non-reasoning" is intentionally its own term here, not "reasoning" -
+    // xAI ships paired variants like grok-4.20-0309-reasoning and
+    // grok-4.20-0309-non-reasoning. Excluding bare /reasoning/ would match
+    // BOTH strings (non-reasoning contains "reasoning" as a substring) and
+    // throw away the good one along with the bad one. non-?reasoning also
+    // catches an unhyphenated "nonreasoning" form if xAI ever ships one.
+    // Tagging/classification work benefits from the reasoning variant, so
+    // steer away from the faster-but-shallower non-reasoning one by default.
+    exclude: /fast|mini|lite|code-fast|non-?reasoning/i,
   },
   // Prefer sonnet/opus over haiku; newest first already gives us the latest
   anthropic: {
