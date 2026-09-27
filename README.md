@@ -1,4 +1,4 @@
-# self-healing-models
+# failsafe-llm-model-resolver
 
 **Self-healing, failsafe resolver for the current frontier model.**
 
@@ -6,7 +6,7 @@ Live `/models` fetch → preference rules → env-pinned fallback.
 A transient network hiccup never kills a batch job.
 
 ```js
-const { resolveModel, getNextFreeModel } = require('self-healing-models');
+const { resolveModel, getNextFreeModel } = require('failsafe-llm-model-resolver');
 
 const { id, source } = await resolveModel('xai', process.env.XAI_API_KEY);
 // → { id: 'grok-4', source: 'live' }
@@ -26,7 +26,7 @@ const model = 'openrouter/free'; // may 404 or be rate-limited
 
 …breaks batch jobs and agents at the worst moment.
 
-**self-healing-models** does the boring but critical work once:
+**failsafe-llm-model-resolver** does the boring but critical work once:
 
 1. Hits each provider’s native model-list endpoint
 2. Applies a stable preference rule (newest non-fast / non-mini / non-haiku)
@@ -53,15 +53,15 @@ No heavy SDKs. Native `fetch` only (Node ≥ 18).
 ## Install
 
 ```bash
-npm install self-healing-models
+npm install failsafe-llm-model-resolver
 ```
 
 Or, for personal multi-project reuse without publishing:
 
 ```bash
-# place index.js somewhere shared, e.g. ~/dev/shared-lib/self-healing-models/
+# place index.js somewhere shared, e.g. ~/dev/shared-lib/failsafe-llm-model-resolver/
 export NODE_PATH="$HOME/dev/shared-lib:$NODE_PATH"
-# then: require('self-healing-models')
+# then: require('failsafe-llm-model-resolver')
 ```
 
 ---
@@ -130,7 +130,7 @@ Defaults are sensible current frontier IDs; override them for your own pins.
 **Simple resolve**
 
 ```js
-const { resolveModel } = require('self-healing-models');
+const { resolveModel } = require('failsafe-llm-model-resolver');
 
 async function chat(prompt) {
   const { id } = await resolveModel('anthropic', process.env.ANTHROPIC_API_KEY);
@@ -141,7 +141,7 @@ async function chat(prompt) {
 **Self-healing OpenRouter free rotation** (matches the original working code)
 
 ```js
-const { getNextFreeModel, resetFreeModelIndex } = require('self-healing-models');
+const { getNextFreeModel, resetFreeModelIndex } = require('failsafe-llm-model-resolver');
 
 async function callOpenRouter(prompt) {
   resetFreeModelIndex();

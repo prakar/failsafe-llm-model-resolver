@@ -1,5 +1,5 @@
 {
-  "name": "self-healing-models",
+  "name": "failsafe-llm-model-resolver",
   "version": "1.0.0",
   "description": "Self-healing, failsafe resolver for the current frontier model across xAI, Anthropic, Gemini, and OpenRouter. Live /models fetch + preference rules + env fallbacks so a network blip never kills a batch job.",
   "main": "index.js",
@@ -31,12 +31,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_USERNAME/self-healing-models.git"
+    "url": "git+https://github.com/prakar/failsafe-llm-model-resolver.git"
   },
   "bugs": {
-    "url": "https://github.com/YOUR_USERNAME/self-healing-models/issues"
+    "url": "https://github.com/prakar/failsafe-llm-model-resolver/issues"
   },
-  "homepage": "https://github.com/YOUR_USERNAME/self-healing-models#readme",
+  "homepage": "https://github.com/prakar/failsafe-llm-model-resolver#readme",
   "files": [
     "index.js",
     "index.d.ts",

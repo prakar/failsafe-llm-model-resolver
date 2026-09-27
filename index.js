@@ -1,5 +1,5 @@
 /**
- * self-healing-models
+ * failsafe-llm-model-resolver
  *
  * Self-healing, failsafe resolver for the current frontier model across
  * xAI, Anthropic, Gemini, and OpenRouter.
@@ -15,7 +15,7 @@
  * • In-memory cache per process
  * • Env-configurable pinned fallbacks so a transient network blip never kills a batch job
  *
- * @see https://github.com/YOUR_USERNAME/self-healing-models
+ * @see https://github.com/prakar/failsafe-llm-model-resolver
  */
 
 'use strict';
