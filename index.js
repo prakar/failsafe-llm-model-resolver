@@ -32,6 +32,49 @@ const _cache = {
 let _orFreeIdx = 0;       // round-robin index for OpenRouter free models
 
 // ---------------------------------------------------------------------------
+// "Known-bad" models — a model can be genuinely listed by a provider's own
+// live /models endpoint and STILL fail the actual generation call (observed
+// in production: Gemini returning 404 "no longer available to new users"
+// for a model its own listing still showed - an account-tier mismatch the
+// listing endpoint doesn't expose). This is a different fact from "does this
+// model exist" (_cache above) and needs its own cache: a model can be valid
+// AND bad at the same time.
+//
+// DESIGN NOTE FOR ANYONE FORKING OR EXTENDING THIS FILE, READ BEFORE ADDING
+// PERSISTENCE OR A TTL HERE:
+//
+// This cache is deliberately in-memory only, scoped to the current process,
+// with NO disk persistence and NO time-based expiry. That is not a missing
+// feature - it's the fix for the exact bug class this whole package exists
+// to prevent. If you persist "known-bad" to disk with no expiry, you
+// recreate a hardcoded-stale-model bug with extra steps: the day the
+// provider fixes the model, or the caller's account tier changes, a
+// persisted bad-list keeps avoiding a model that now works, silently,
+// forever, with no signal telling you it's wrong. A TTL "fixes" that at the
+// cost of inventing its own new failure surface (wrong duration, clock
+// skew, timezone bugs) to get right.
+//
+// Tying this cache to the process lifetime needs none of that. It goes away
+// automatically the moment the process exits - the next invocation always
+// re-validates a previously-bad model exactly once before falling through
+// again if it's still broken. For a long batch job (thousands of calls, one
+// process, hours), this is precisely where the win matters: discover the
+// bad model once, skip it for the rest of the run. For a short one-off CLI
+// call, the cost of "one wasted call on rediscovery" is trivial. Either way,
+// correctness comes from where the boundary naturally sits, not from logic
+// you have to write and can get wrong.
+//
+// If you genuinely need cross-process memory of a bad model, the correct
+// place for that is the CALLING application's own operational monitoring
+// (it already knows it's making repeated calls to the same provider), not
+// this package pretending to be a persistent state store.
+const _knownBad = {
+  xai: new Set(),
+  anthropic: new Set(),
+  gemini: new Set(),
+};
+
+// ---------------------------------------------------------------------------
 // Defaults / env fallbacks
 // ---------------------------------------------------------------------------
 const DEFAULT_FALLBACKS = {
@@ -214,7 +257,11 @@ async function resolveModel(provider, apiKey, options = {}) {
         if (p === 'gemini')     list = await fetchGeminiModels(apiKey);
         _cache[p] = list;
       }
-      id = pickPreferred(list, PREFERENCE[p]);
+      // Skip anything this process has already learned fails the real call,
+      // even though it's genuinely present in the live list (see _knownBad
+      // above for why "listed" and "actually works" are different facts).
+      const usable = (list || []).filter(id => !_knownBad[p].has(id));
+      id = pickPreferred(usable, PREFERENCE[p]);
     }
 
     if (id) return { id, source: 'live' };
@@ -271,11 +318,40 @@ function resetFreeModelIndex() {
 /**
  * Clear all in-memory caches (mainly for tests).
  */
+/**
+ * Record that a model failed the REAL call (not just resolution) - e.g. a
+ * 404/permission error from the provider's generateContent/chat-completions
+ * endpoint. Every subsequent resolveModel() call for this provider, in this
+ * process, will skip this id and pick the next-best live candidate instead.
+ *
+ * Typical caller pattern (no separate retry-loop function needed - this is
+ * the whole point of folding known-bad awareness into resolveModel itself):
+ *
+ *   let resolved = await resolveModel('gemini', key, { fallback: PINNED });
+ *   try {
+ *     return await actuallyCallTheApi(resolved.id);
+ *   } catch (e) {
+ *     markModelBad('gemini', resolved.id);
+ *     resolved = await resolveModel('gemini', key, { fallback: PINNED });
+ *     return await actuallyCallTheApi(resolved.id); // now skips the bad one
+ *   }
+ *
+ * Not exposed for 'openrouter' - its free-tier round-robin already moves on
+ * from a failing model via getNextFreeModel()'s own retry loop.
+ */
+function markModelBad(provider, modelId) {
+  const p = String(provider || '').toLowerCase();
+  if (_knownBad[p] && modelId) _knownBad[p].add(modelId);
+}
+
 function clearCache() {
   _cache.xai = null;
   _cache.anthropic = null;
   _cache.gemini = null;
   _cache.openrouter = null;
+  _knownBad.xai.clear();
+  _knownBad.anthropic.clear();
+  _knownBad.gemini.clear();
   _orFreeIdx = 0;
 }
 
@@ -287,6 +363,7 @@ module.exports = {
   fetchFreeModels,
   getNextFreeModel,
   resetFreeModelIndex,
+  markModelBad,
   clearCache,
   // exposed for advanced callers / tests
   DEFAULT_FALLBACKS,

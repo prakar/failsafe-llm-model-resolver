@@ -54,7 +54,21 @@ export function getNextFreeModel(apiKey: string): Promise<string>;
 /** Reset the free-model round-robin index (call at the start of a batch). */
 export function resetFreeModelIndex(): void;
 
-/** Clear all in-memory caches (mainly for tests). */
+/**
+ * Record that a model failed the REAL call (generation/completion), not just
+ * resolution. Every subsequent resolveModel() call for this provider, in
+ * this process, will skip this id in favour of the next-best live candidate.
+ * Deliberately in-memory/process-lifetime only - see the design comment
+ * above _knownBad in index.js before adding persistence or a TTL here.
+ * Not applicable to 'openrouter' (its free-tier round-robin already moves
+ * on from a failing model via getNextFreeModel()'s own retry loop).
+ */
+export function markModelBad(
+  provider: Exclude<Provider, 'openrouter'>,
+  modelId: string
+): void;
+
+/** Clear all in-memory caches, including known-bad models (mainly for tests). */
 export function clearCache(): void;
 
 export const DEFAULT_FALLBACKS: Readonly<Record<Provider, string>>;
