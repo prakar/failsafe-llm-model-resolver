@@ -1,0 +1,46 @@
+{
+  "name": "self-healing-models",
+  "version": "1.0.0",
+  "description": "Self-healing, failsafe resolver for the current frontier model across xAI, Anthropic, Gemini, and OpenRouter. Live /models fetch + preference rules + env fallbacks so a network blip never kills a batch job.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "test": "node smoke-test.js",
+    "smoke": "node smoke-test.js"
+  },
+  "keywords": [
+    "llm",
+    "models",
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "xai",
+    "grok",
+    "openrouter",
+    "self-healing",
+    "failover",
+    "fallback",
+    "model-resolver",
+    "frontier"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_USERNAME/self-healing-models.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/self-healing-models/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/self-healing-models#readme",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ]
+}
