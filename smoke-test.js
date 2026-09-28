@@ -1,8 +1,9 @@
 /**
  * smoke-test.js – run with:  node smoke-test.js
  *
- * Without real API keys the module correctly returns the env/hard-coded
- * fallbacks.  With keys present it will exercise the live paths.
+ * Without real API keys the module correctly returns the env/default fallbacks
+ * (which means the live-fetch paths are NOT exercised). With keys present it
+ * makes real requests; use `node inspect.js <provider>` for the full picture.
  *
  *   XAI_API_KEY=... ANTHROPIC_API_KEY=... GEMINI_API_KEY=... OPENROUTER_API_KEY=... node smoke-test.js
  */
@@ -14,12 +15,11 @@ const {
   fetchFreeModels,
   getNextFreeModel,
   resetFreeModelIndex,
-  clearCache,
   DEFAULT_FALLBACKS,
 } = require('./');
 
 async function run() {
-  console.log('=== self-healing-models smoke test ===\n');
+  console.log('=== llm-model-resolver smoke test ===\n');
   console.log('Default fallbacks:', DEFAULT_FALLBACKS);
   console.log('');
 
@@ -31,8 +31,9 @@ async function run() {
   };
 
   for (const [provider, key] of Object.entries(keys)) {
-    const result = await resolveModel(provider, key);
-    console.log(`${provider.padEnd(12)} → ${result.id}  (${result.source})${key ? '' : '  [no key]'}`);
+    const r = await resolveModel(provider, key);
+    const via = r.orderedBy ? `, newest by ${r.orderedBy}` : '';
+    console.log(`${provider.padEnd(12)} → ${r.id}  (${r.source}${via})${key ? '' : '  [no key]'}`);
   }
 
   console.log('\n--- OpenRouter free round-robin ---');
