@@ -1,6 +1,6 @@
 {
   "name": "llm-model-resolver",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Self-healing, failsafe resolver for the current frontier model across xAI, Anthropic, Gemini, and OpenRouter. Live /models fetch + preference rules + env fallbacks so a network blip never kills a batch job.",
   "main": "index.js",
   "types": "index.d.ts",
