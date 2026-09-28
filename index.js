@@ -10,7 +10,7 @@
  * ────────────
  * • Live fetch from each provider’s native /models endpoint
  * • Preference rules:
- *     – paid providers: regex + “newest first, skip fast/mini/lite/haiku”
+ *     – paid providers: include/exclude regex; first match in the order the provider returns (no version sorting; see README)
  *     – OpenRouter free: filter pricing.prompt/completion === '0', then round-robin
  * • In-memory cache per process
  * • Env-configurable pinned fallbacks so a transient network blip never kills a batch job
@@ -84,7 +84,7 @@ const DEFAULT_FALLBACKS = {
   openrouter: process.env.OPENROUTER_MODEL_FALLBACK || process.env.OPENROUTER_FREE_FALLBACK || 'openrouter/free',
 };
 
-// Preference patterns for paid providers (applied after newest-first ordering)
+// Preference patterns for paid providers (applied to the list in the provider's own order - there is no sorting step)
 const PREFERENCE = {
   // Prefer flagship grok-*, skip fast / mini / code-fast variants when possible
   xai: {
@@ -99,7 +99,7 @@ const PREFERENCE = {
     // steer away from the faster-but-shallower non-reasoning one by default.
     exclude: /fast|mini|lite|code-fast|non-?reasoning/i,
   },
-  // Prefer sonnet/opus over haiku; newest first already gives us the latest
+  // Prefer sonnet/opus over haiku. Anthropic documents its list as newest-first, so the first match is the latest.
   anthropic: {
     include: /^claude-/i,
     exclude: /haiku|instant|mini/i,
@@ -130,7 +130,7 @@ async function httpGet(url, headers = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-provider fetch + normalize → string[] of usable model IDs (newest first)
+// Per-provider fetch + normalize → string[] of usable model IDs (provider's own order; only Anthropic documents newest-first)
 // ---------------------------------------------------------------------------
 async function fetchXaiModels(apiKey) {
   const json = await httpGet('https://api.x.ai/v1/models', {
@@ -146,7 +146,7 @@ async function fetchAnthropicModels(apiKey) {
     'x-api-key': apiKey,
     'anthropic-version': '2023-06-01',
   });
-  // Newest-first by design. Shape: { data: [ { id, display_name, created_at } ] }
+  // Anthropic documents this list as newest-first. Shape: { data: [ { id, display_name, created_at } ] }
   const list = (json.data || []).map(m => m.id).filter(Boolean);
   return list;
 }
