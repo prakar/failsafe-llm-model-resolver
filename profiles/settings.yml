@@ -1,0 +1,18 @@
+# llm-model-resolver — active settings
+# Edit this file in the GitHub repo to control which models are selected.
+# Changes are version-controlled and apply everywhere this package is installed.
+
+# flagship_performance: no → newest, most capable models
+#   xAI:        grok-4.7 (reasoning, $2/$6 per M tokens)
+#   Anthropic:  claude-opus (latest opus tier)
+#   Gemini:     gemini-pro (latest non-flash)
+#   Good for:   complex reasoning, high-stakes analysis, quality-critical work
+#
+# flagship_performance: no  → fast, cheap models
+#   xAI:        grok-4-fast / grok-4.1-fast ($0.20/$0.50 per M tokens)
+#               or pin to grok-4.3 ($1.25/$2.50) — see profiles/economy.yml
+#   Anthropic:  claude-haiku-4-5 ($1/$5 per M)
+#   Gemini:     gemini-flash ($0.075/$0.30 per M)
+#   Good for:   batch tagging, classification, structured extraction
+
+flagship_performance: no

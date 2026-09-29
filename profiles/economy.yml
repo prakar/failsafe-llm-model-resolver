@@ -1,0 +1,56 @@
+# llm-model-resolver — Economy profile
+# Picks fast, cheap models suited for high-volume batch classification work.
+# Reasoning models are excluded: they add 60-90s latency and 2-4x cost
+# per call without quality gains on structured extraction tasks.
+#
+# Prices checked 2026-09-28:
+#   grok-4.3       $1.25/$2.50 per M — quality/cost sweet spot
+#   grok-4-fast    $0.20/$0.50 per M — cheapest xAI option
+#   grok-4.1-fast  $0.20/$0.50 per M — slightly newer fast variant
+#   grok-4.7       $2.00/$6.00 per M — flagship reasoning, NOT wanted here
+#   claude-haiku-4-5 $1.00/$5.00 per M — Anthropic fast tier
+#   gemini-flash   $0.075/$0.30 per M — cheapest Gemini
+
+global:
+  timeoutMs:  300000   # 5 minutes — fast models respond in seconds, but be safe
+  cooldownMs: 60000
+  order:      newest   # within the included set, still prefer the newer fast model
+
+providers:
+
+  xai:
+    # Include all grok-* chat models including fast variants
+    include:  "^grok-"
+    # Exclude:
+    #   reasoning (any variant): adds latency and cost for no gain on classification
+    #   non-reasoning: the named paired variant we also don't need
+    #   image|imagine|video: non-chat models
+    #   code-fast: code-specific specialisation, not needed for general tagging
+    # NOTE: grok-4-fast and grok-4.1-fast ARE included (they don't match any of these)
+    # NOTE: grok-4.7 would be excluded too if it carries "reasoning" in its name;
+    #       if it doesn't, use the pin below to force a specific safe model.
+    exclude:  "(?:^|[.-])reasoning|non-?reasoning|image|imagine|video|code-fast"
+    # Pin: uncomment one of these to bypass the live list entirely and always use
+    # a specific model regardless of what the provider lists. This is the recommended
+    # approach when cost predictability matters more than getting the latest fast model.
+    pin: "grok-4.3"        # quality/cost sweet spot, $1.25/$2.50 per M
+    # pin: "grok-4-fast"     # cheapest, $0.20/$0.50 per M
+    # pin: "grok-4.1-fast"   # slightly newer fast, $0.20/$0.50 per M
+    fallback: "grok-4.3"
+
+  anthropic:
+    # Include haiku tier (fast, cheap — excluded in the flagship profile)
+    include:  "^claude-"
+    exclude:  "instant|mini"   # haiku is NOT excluded here
+    # pin: "claude-haiku-4-5"   # uncomment to pin to the Anthropic fast tier
+    fallback: "claude-haiku-4-5"
+
+  gemini:
+    # Include flash models (excluded in the flagship profile)
+    include:  "gemini-"
+    exclude:  "lite|embedding|aqa|imagen|veo|tts|live|image|audio"  # flash NOT excluded
+    # pin: "gemini-2.5-flash"   # uncomment to pin to a specific flash version
+    fallback: "gemini-flash-latest"
+
+  openrouter:
+    fallback: "openrouter/free"

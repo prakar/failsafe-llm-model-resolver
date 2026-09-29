@@ -1,49 +1,40 @@
 {
   "name": "llm-model-resolver",
-  "version": "1.2.0",
-  "description": "Resolve the current model ID for xAI, Anthropic, Gemini and OpenRouter at runtime: live /models fetch, newest-first ordering, timeouts and a pinned fallback, so a hard-coded model name never breaks a batch job.",
+  "version": "1.3.0",
+  "description": "Resolve the current model ID for xAI, Anthropic, Gemini and OpenRouter at runtime. Config-file-driven: include/exclude patterns, pins, and fallbacks live in YAML/JSON, not in code.",
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "test": "node --test test/resolver.test.js test/readme.test.js && node smoke-test.js",
+    "test": "node --test test/resolver.test.js && node smoke-test.js",
     "smoke": "node smoke-test.js",
-    "inspect": "node inspect.js"
+    "inspect": "node inspect.js",
+    "build-profiles": "node build-profiles.js",
+    "prepare": "node build-profiles.js"
   },
   "keywords": [
-    "anthropic",
-    "claude",
-    "failover",
-    "fallback",
-    "frontier",
-    "gemini",
-    "grok",
     "llm",
-    "model-discovery",
-    "model-resolver",
-    "models",
-    "openai",
+    "model",
+    "resolver",
+    "grok",
+    "claude",
+    "gemini",
     "openrouter",
-    "self-healing",
-    "timeout",
-    "xai"
+    "config"
   ],
-  "author": "",
-  "license": "MIT",
+  "license": "ISC",
+  "type": "commonjs",
   "engines": {
     "node": ">=18"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/prakar/llm-model-resolver.git"
-  },
-  "bugs": {
-    "url": "https://github.com/prakar/llm-model-resolver/issues"
-  },
-  "homepage": "https://github.com/prakar/llm-model-resolver#readme",
   "files": [
     "index.js",
     "index.d.ts",
+    "profiles/",
     "README.md",
-    "LICENSE"
-  ]
+    "CHANGELOG.md",
+    "build-profiles.js"
+  ],
+  "devDependencies": {
+    "js-yaml": "^4.1.0"
+  }
 }

@@ -1,0 +1,36 @@
+# llm-model-resolver — Flagship profile
+# Picks the newest, most capable model for each provider.
+# Highest quality; also highest latency and cost.
+# Good for: complex reasoning, long documents, quality-critical work.
+
+global:
+  timeoutMs:  600000   # 10 minutes — reasoning models can take a long time
+  cooldownMs: 60000    # 1 minute before retrying a failed /models fetch
+  order:      newest   # newest | oldest | provider
+
+providers:
+
+  xai:
+    # Newest grok-* model, preferring the reasoning variant
+    include:  "^grok-"
+    # non-?reasoning: skip the non-reasoning paired variant
+    # (bare "reasoning" would also match "non-reasoning" — exclude the specific form)
+    # fast|mini|lite|code-fast: skip smaller/cheaper tiers
+    # image|imagine|video: skip non-chat models that appear in /v1/models
+    exclude:  "non-?reasoning|fast|mini|lite|code-fast|image|imagine|video"
+    fallback: "grok-4"   # used only when live resolution fails
+
+  anthropic:
+    # Newest claude-* model, skipping the cheap/fast tiers
+    include:  "^claude-"
+    exclude:  "haiku|instant|mini"
+    fallback: "claude-sonnet-5"
+
+  gemini:
+    # Newest pro-class gemini model; flash/lite and non-chat families excluded
+    include:  "gemini-"
+    exclude:  "flash|lite|embedding|aqa|imagen|veo|tts|live|image|audio"
+    fallback: "gemini-flash-latest"
+
+  openrouter:
+    fallback: "openrouter/free"
