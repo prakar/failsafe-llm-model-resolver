@@ -1,43 +1,76 @@
 # llm-model-resolver — Economy profile
-# Picks the cheapest eligible model by actual API-reported price, not by name heuristics.
-# The xAI /v1/language-models endpoint returns prompt_text_token_price for every model;
-# order: cheapest sorts by that field ascending so a new expensive model (like grok-4.7)
-# is ranked below a cheaper one automatically, regardless of its name or release date.
+# Picks the cheapest eligible model using actual API-reported prices where available,
+# and a maintained pricing table (knownPrices) for providers whose APIs don't expose pricing.
 #
-# Prices as of 2026-09-29 (confirmed from live API response):
-#   grok-4-fast / grok-4.1-fast    $0.20/$0.50 per M   ← cheapest
-#   grok-4.3                       $1.25/$2.50 per M   ← next cheapest
-#   grok-4.20-*-reasoning          $1.25/$2.50 per M   (same price tier as 4.3)
-#   grok-4.7                       $2.00/$6.00 per M   ← excluded by price, not by name
+# order: cheapest — ranks eligible models by effective input-token price ascending.
+# "Effective input-token price" is a deliberate simplification: it uses the base uncached
+# input rate and ignores volume tiers, caching discounts, batch pricing, and reasoning
+# tokens. This is appropriate for model *selection*; cost *accounting* is a separate concern.
 #
-# The pin field is available for cost-ceiling enforcement or CI reproducibility,
-# but is not needed for normal economy operation — price sorting handles it.
+# Pricing sources:
+#   xAI        → prompt_text_token_price from /v1/language-models (live, provider-api)
+#   Anthropic  → maintained table below (no pricing in the /v1/models response)
+#   Gemini     → maintained table below (no pricing in the /v1beta/models response)
+#
+# To update prices: edit the input/output values below, update the `updated` date,
+# then run: npm run build-profiles
 
 global:
   timeoutMs:  300000
   cooldownMs: 60000
-  order:      cheapest   # sort eligible models by API-reported price, cheapest first
+  order:      cheapest
 
 providers:
 
   xai:
     include:  "^grok-"
-    # Exclude non-chat models and the non-reasoning paired variant.
-    # Reasoning is NOT excluded by name — price ordering already ranks cheaper
-    # models ahead of expensive reasoning ones without needing to know the name.
+    # Excludes:
+    #   non-?reasoning  — the non-reasoning paired variant (keeps reasoning variants)
+    #   image|imagine|video  — non-chat models that appear in /v1/models
+    #   code-fast  — code-specialised fast variant
+    # Note: grok-4.7 is NOT excluded by name because its name doesn't say "reasoning".
+    # Price ordering handles it: at $2/M it ranks below grok-4.3 ($1.25) and
+    # grok-4-fast ($0.20) without any name heuristic.
     exclude:  "non-?reasoning|image|imagine|video|code-fast"
-    # pin: "grok-4.3"   # uncomment for cost-ceiling enforcement or CI reproducibility
+    # pin: "grok-4.3"  — uncomment for cost-ceiling enforcement or CI reproducibility
     fallback: "grok-4.3"
+    # No knownPrices needed — xAI's API returns prompt_text_token_price live.
 
   anthropic:
     include:  "^claude-"
     exclude:  "instant|mini"
     fallback: "claude-haiku-4-5"
+    knownPrices:
+      source:  maintained
+      updated: "2026-09-29"
+      # Prices in USD per million tokens. Anthropic's /v1/models does not return pricing.
+      # Prefix match: "claude-haiku-4" matches "claude-haiku-4-5-20251001" etc.
+      # Verify current rates at: https://www.anthropic.com/pricing
+      models:
+        claude-haiku-3:     { input:  0.25, output:  1.25 }   # claude-3-haiku-20240307
+        claude-haiku-4:     { input:  1.00, output:  5.00 }   # claude-haiku-4-5 and variants
+        claude-sonnet-4:    { input:  3.00, output: 15.00 }
+        claude-sonnet-5:    { input:  3.00, output: 15.00 }
+        claude-opus-4:      { input: 15.00, output: 75.00 }
+        claude-opus-5:      { input: 15.00, output: 75.00 }
 
   gemini:
     include:  "gemini-"
     exclude:  "lite|embedding|aqa|imagen|veo|tts|live|image|audio"
     fallback: "gemini-flash-latest"
+    knownPrices:
+      source:  maintained
+      updated: "2026-09-29"
+      # Prices in USD per million tokens. Gemini's /v1beta/models does not return pricing.
+      # Gemini Pro pricing is for prompts up to 200k tokens; doubles above that threshold.
+      # Verify current rates at: https://ai.google.dev/gemini-api/docs/pricing
+      models:
+        gemini-flash-latest:  { input: 0.075, output:  0.30 }
+        gemini-2.5-flash:     { input: 0.075, output:  0.30 }
+        gemini-2.5-pro:       { input: 1.25,  output:  5.00 }
+        gemini-3-pro:         { input: 1.25,  output:  5.00 }
+        gemini-3.1-pro:       { input: 1.25,  output:  5.00 }
+        gemini-pro-latest:    { input: 1.25,  output:  5.00 }
 
   openrouter:
     fallback: "openrouter/free"

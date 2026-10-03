@@ -107,11 +107,32 @@ function configure(raw) {
   for (const p of PROVIDERS) {
     const built = _BUILT_IN.providers[p];
     const over  = prov[p] || {};
+    // knownPrices: maintained price table for providers whose /models API doesn't return pricing.
+    // Accepts two shapes:
+    //   Flat (legacy):   { "model-id": inputPricePerMillionUSD }
+    //   Rich (current):  { source, updated, models: { "model-id": { input, output } } }
+    // Keys are matched by exact ID, then longest prefix, at query time.
+    const rawPrices = (over.knownPrices && typeof over.knownPrices === 'object') ? over.knownPrices : null;
+    let parsedPrices = null;
+    if (rawPrices) {
+      const meta   = { source: rawPrices.source || 'maintained', updated: rawPrices.updated || null };
+      const models = rawPrices.models || rawPrices;   // flat fallback
+      parsedPrices = { ...meta, models: {} };
+      for (const [k, v] of Object.entries(models)) {
+        if (k === 'source' || k === 'updated') continue;
+        if (v && typeof v === 'object') {
+          parsedPrices.models[k] = { input: Number(v.input ?? v.in ?? 0), output: Number(v.output ?? v.out ?? 0) };
+        } else {
+          parsedPrices.models[k] = { input: Number(v), output: 0 };
+        }
+      }
+    }
     merged.providers[p] = {
-      pin:      over.pin      != null ? String(over.pin) : built.pin,
-      include:  _toRegex(over.include) || built.include,
-      exclude:  _toRegex(over.exclude) || built.exclude,
-      fallback: over.fallback != null ? String(over.fallback) : built.fallback,
+      pin:         over.pin      != null ? String(over.pin) : built.pin,
+      include:     _toRegex(over.include) || built.include,
+      exclude:     _toRegex(over.exclude) || built.exclude,
+      fallback:    over.fallback != null ? String(over.fallback) : built.fallback,
+      knownPrices: parsedPrices,
     };
   }
 
@@ -227,7 +248,21 @@ async function fetchXaiModels(apiKey, timeoutMs) {
   // Dividing by 1e4 gives USD per million tokens input, matching the prices you see on
   // xAI's pricing page. The economy profile uses this to pick the cheapest eligible model.
   const xaiPrice = m => (typeof m.prompt_text_token_price === 'number') ? m.prompt_text_token_price / 1e4 : null;
-  const toEntry  = m => { const id = m && (m.id || m.name); return id ? { id, created: toMs(m.created), generation: null, priceIn: xaiPrice(m) } : null; };
+  const toEntry  = m => {
+    const id = m && (m.id || m.name);
+    if (!id) return null;
+    const price = xaiPrice(m);
+    return {
+      id,
+      created:         toMs(m.created),
+      generation:      null,
+      priceIn:         price,
+      priceOut:        typeof m.completion_text_token_price === 'number' ? m.completion_text_token_price / 1e4 : null,
+      priceSource:     price != null ? 'provider-api' : null,
+      priceConfidence: price != null ? 'live'         : null,
+      priceUpdated:    null,
+    };
+  };
   try {
     const json    = await httpGet('https://api.x.ai/v1/language-models', headers, timeoutMs);
     const entries = (json.models || json.data || []).map(toEntry).filter(Boolean);
@@ -389,7 +424,37 @@ async function evaluate(provider, apiKey, options) {
       }
     }
 
-    const mode   = options.order || _cfg.order;
+    // Enrich entries: xAI fetcher already set priceIn + priceSource='provider-api'.
+    // For other providers, look up in knownPrices (exact match, then longest prefix).
+    if (pc.knownPrices) {
+      const { models, source: kpSource, updated: kpUpdated } = pc.knownPrices;
+      for (const e of entries) {
+        if (e.priceIn != null) continue;   // already enriched by the fetcher
+        const exact = models[e.id];
+        const row   = exact || (() => {
+          const hit = Object.keys(models).filter(k => e.id.startsWith(k)).sort((a,b) => b.length-a.length)[0];
+          return hit ? models[hit] : null;
+        })();
+        if (row) {
+          e.priceIn          = row.input;
+          e.priceOut         = row.output;
+          e.priceSource      = kpSource || 'maintained';
+          e.priceConfidence  = 'maintained';
+          e.priceUpdated     = kpUpdated || null;
+        }
+      }
+    }
+    // Warn when cheapest ordering was requested but no model has any price data.
+    const effectiveMode = options.order || _cfg.order;
+    if (effectiveMode === 'cheapest' && entries.length && entries.every(e => e.priceIn == null)) {
+      process.emitWarning(
+        'llm-model-resolver: order:cheapest requested for ' + p + ' but no price data is available ' +
+        '(neither from the provider API nor from knownPrices). Falling back to provider order. ' +
+        'Add a knownPrices table to your economy profile for this provider.',
+        { code: 'LLM_RESOLVER_PRICE_UNAVAILABLE' }
+      );
+    }
+    const mode   = effectiveMode;
     const rules  = { include: pc.include, exclude: pc.exclude };
     const usable = entries.filter(e => !_knownBad[p]?.has(e.id));
     const sel    = usable.length ? choose(usable, rules, mode) : null;
@@ -402,7 +467,18 @@ async function evaluate(provider, apiKey, options) {
       else if (rules.include && !rules.include.test(e.id))    status = 'not-matching';
       else if (rules.exclude &&  rules.exclude.test(e.id))    status = 'excluded';
       else                                                     status = 'eligible';
-      return { id: e.id, created: e.created ? new Date(e.created).toISOString() : null, generation: e.generation?.join('.') || null, priceIn: e.priceIn ?? null, status, rank: rankOf.get(e.id) || null };
+      return {
+        id:               e.id,
+        created:          e.created ? new Date(e.created).toISOString() : null,
+        generation:       e.generation?.join('.') || null,
+        priceIn:          e.priceIn          ?? null,
+        priceOut:         e.priceOut         ?? null,
+        priceSource:      e.priceSource      ?? null,   // 'provider-api' | 'maintained' | null
+        priceConfidence:  e.priceConfidence  ?? null,   // 'live' | 'maintained' | null
+        priceUpdated:     e.priceUpdated     ?? null,   // ISO date string from knownPrices.updated
+        status,
+        rank:             rankOf.get(e.id)   || null,
+      };
     }).sort((a, b) => (_GRP[a.status] - _GRP[b.status]) || ((a.rank||1e9) - (b.rank||1e9)));
 
     if (sel?.chosen) {

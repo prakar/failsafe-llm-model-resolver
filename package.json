@@ -1,6 +1,6 @@
 {
   "name": "llm-model-resolver",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Resolve the current model ID for xAI, Anthropic, Gemini and OpenRouter at runtime. Config-file-driven: include/exclude patterns, pins, and fallbacks live in YAML/JSON, not in code.",
   "main": "index.js",
   "types": "index.d.ts",

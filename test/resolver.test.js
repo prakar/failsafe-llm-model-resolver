@@ -26,7 +26,15 @@ const MAR=1773014400, MAY=1778803200;
 const XL='https://api.x.ai/v1/language-models';
 const AN='https://api.anthropic.com/v1/models';
 const GE='https://generativelanguage.googleapis.com/v1beta/models';
-const xl = (...pairs) => ({ models: pairs.map(([id,c])=>({id,created:c})) });
+// xl() creates a /v1/language-models response. Third element is prompt_text_token_price
+// in API units (÷1e4 = $/M); defaults to a realistic mid-tier price so that
+// tests using cheapest ordering don't fire LLM_RESOLVER_PRICE_UNAVAILABLE warnings
+// when the intent is to test something else. Use xl_noprice() to test no-data fallbacks.
+const XAI_DEFAULT_PRICE = 12500;   // $1.25/M — mid-tier default
+const xl = (...pairs) => ({ models: pairs.map(([id,c,price])=>({id,created:c,
+  prompt_text_token_price: price ?? (id.includes('fast') ? 2000 : id.includes('4.7') ? 20000 : XAI_DEFAULT_PRICE)
+})) });
+const xl_noprice = (...pairs) => ({ models: pairs.map(([id,c])=>({id,created:c})) });
 const G  = (name,m=['generateContent']) => ({name:'models/'+name, supportedGenerationMethods:m});
 
 test('pin: returns pinned id immediately, source=pinned, no network call', async () => {
@@ -252,6 +260,23 @@ test('unknown env profile emits warning, falls back to settings.yml profile', ()
 
 // ── order: cheapest ────────────────────────────────────────────────────────
 
+test('xAI entries have priceSource=provider-api, priceConfidence=live', async () => {
+  const m = load();
+  m.configure({ global: { order: 'cheapest' }, providers: { xai: { include: '^grok-', exclude: 'NOMATCH', fallback: 'grok-4' } } });
+  mockNet({ [XL]: { models: [
+    { id: 'grok-4.3',   created: MAY, prompt_text_token_price: 12500, completion_text_token_price: 25000 },
+    { id: 'grok-4.7',   created: MAY+100, prompt_text_token_price: 20000, completion_text_token_price: 60000 },
+  ] } });
+  const ev = await m.inspectModels('xai', 'k');
+  const byId = Object.fromEntries(ev.candidates.map(c => [c.id, c]));
+  assert.equal(byId['grok-4.3'].priceIn,         1.25);
+  assert.equal(byId['grok-4.3'].priceOut,        2.50);
+  assert.equal(byId['grok-4.3'].priceSource,     'provider-api');
+  assert.equal(byId['grok-4.3'].priceConfidence, 'live');
+  assert.equal(byId['grok-4.3'].priceUpdated,    null);
+  assert.equal(byId['grok-4.7'].priceIn,         2.00);
+});
+
 test('cheapest: picks the model with the lowest priceIn, not the newest', async () => {
   const m = load();
   m.configure({ global: { order: 'cheapest' }, providers: { xai: { include: '^grok-', exclude: 'non-?reasoning|image|video', fallback: 'grok-4.3' } } });
@@ -288,19 +313,24 @@ test('cheapest: models with no price data sort after priced ones', async () => {
   // No exclude so both models are eligible; the one with price data should win
   m.configure({ global: { order: 'cheapest' }, providers: { xai: { include: '^grok-', exclude: 'NOMATCH', fallback: 'grok-4' } } });
   mockNet({ [XL]: { models: [
-    { id: 'grok-new-mystery',  created: MAY+999 },                              // no price
-    { id: 'grok-4-fast',       created: MAR,    prompt_text_token_price: 2000 },
+    { id: 'grok-new-mystery', created: MAY+999 },                   // no price intentionally
+    { id: 'grok-4-fast',     created: MAR, prompt_text_token_price: 2000 },
   ] } });
   assert.equal((await m.resolveModel('xai', 'k')).id, 'grok-4-fast');
 });
 
-test('cheapest: falls back to provider order when no model has price data', async () => {
+test('cheapest: falls back to provider order when no price data; emits a warning', async () => {
   const m = load();
   m.configure({ global: { order: 'cheapest' }, providers: { xai: { include: '^grok-', fallback: 'grok-4' } } });
-  mockNet({ [XL]: { models: [{ id: 'grok-a', created: MAY }, { id: 'grok-b', created: MAR }] } });
-  const r = await m.resolveModel('xai', 'k');
-  assert.equal(r.id, 'grok-a');          // no price data → provider order kept
-  assert.equal(r.orderedBy, 'provider');
+  mockNet({ [XL]: xl_noprice(['grok-a',MAY],['grok-b',MAR]) });
+  const warnings = []; const orig = process.emitWarning.bind(process);
+  process.emitWarning = (msg, opts) => warnings.push(typeof opts === 'object' ? opts.code : msg);
+  try {
+    const r = await m.resolveModel('xai', 'k');
+    assert.equal(r.id, 'grok-a');          // no price data → provider order kept
+    assert.equal(r.orderedBy, 'provider');
+    assert.ok(warnings.includes('LLM_RESOLVER_PRICE_UNAVAILABLE'), 'warning should be emitted');
+  } finally { process.emitWarning = orig; }
 });
 
 test('flagship profile still uses newest order, not cheapest', async () => {
@@ -312,4 +342,200 @@ test('flagship profile still uses newest order, not cheapest', async () => {
   const r = await m.resolveModel('xai', 'k');
   assert.equal(r.id, 'grok-4.7');        // flagship picks newest, regardless of price
   assert.equal(r.orderedBy, 'created');
+});
+
+// ── knownPrices enrichment ─────────────────────────────────────────────────
+
+test('knownPrices: rich structure sets priceIn, priceOut, priceSource, priceConfidence, priceUpdated', async () => {
+  const m = load();
+  m.configure({ global: { order: 'cheapest' }, providers: { anthropic: {
+    include: '^claude-', exclude: 'instant',
+    fallback: 'claude-haiku-4-5',
+    knownPrices: {
+      source: 'maintained', updated: '2026-09-29',
+      models: {
+        'claude-haiku-4-5':  { input: 1.00,  output: 5.00  },
+        'claude-sonnet-5-5': { input: 3.00,  output: 15.00 },
+        'claude-opus-5':     { input: 15.00, output: 75.00 },
+      }
+    },
+  }}});
+  mockNet({ [AN]: { data: [
+    { id: 'claude-opus-5',     created_at: '2026-04-01T00:00:00Z' },
+    { id: 'claude-sonnet-5-5', created_at: '2026-06-01T00:00:00Z' },
+    { id: 'claude-haiku-4-5',  created_at: '2025-10-01T00:00:00Z' },
+  ] } });
+  const ev = await m.inspectModels('anthropic', 'k');
+  assert.equal(ev.id, 'claude-haiku-4-5');
+  assert.equal(ev.orderedBy, 'cheapest');
+  const byId = Object.fromEntries(ev.candidates.map(c => [c.id, c]));
+  // priceIn and priceOut from the rich structure
+  assert.equal(byId['claude-haiku-4-5'].priceIn,   1.00);
+  assert.equal(byId['claude-haiku-4-5'].priceOut,  5.00);
+  assert.equal(byId['claude-opus-5'].priceIn,      15.00);
+  // provenance fields
+  assert.equal(byId['claude-haiku-4-5'].priceSource,     'maintained');
+  assert.equal(byId['claude-haiku-4-5'].priceConfidence, 'maintained');
+  assert.equal(byId['claude-haiku-4-5'].priceUpdated,    '2026-09-29');
+  // flat format still works (backward compat)
+  m.configure({ global: { order: 'cheapest' }, providers: { anthropic: {
+    include: '^claude-', exclude: 'instant', fallback: 'claude-haiku-4-5',
+    knownPrices: { 'claude-haiku-4-5': 1.00, 'claude-opus-5': 15.00 },
+  }}});
+  mockNet({ [AN]: { data: [{ id: 'claude-opus-5', created_at: '2026-04-01T00:00:00Z' }, { id: 'claude-haiku-4-5', created_at: '2025-10-01T00:00:00Z' }] } });
+  assert.equal((await m.resolveModel('anthropic', 'k')).id, 'claude-haiku-4-5');
+});
+
+test('knownPrices: prefix match works (claude-haiku matches claude-haiku-4-5-20251001)', async () => {
+  const m = load();
+  m.configure({ global: { order: 'cheapest' }, providers: { anthropic: {
+    include: '^claude-', exclude: 'instant',
+    fallback: 'claude-haiku-4-5',
+    knownPrices: { 'claude-haiku-4': 1.00, 'claude-sonnet-5': 3.00 },
+  }}});
+  mockNet({ [AN]: { data: [
+    { id: 'claude-sonnet-5-5-20261001', created_at: '2026-10-01T00:00:00Z' },
+    { id: 'claude-haiku-4-5-20251001',  created_at: '2025-10-01T00:00:00Z' },
+  ] } });
+  const ev = await m.inspectModels('anthropic', 'k');
+  assert.equal(ev.id, 'claude-haiku-4-5-20251001');
+  assert.equal(ev.orderedBy, 'cheapest');
+});
+
+test('knownPrices: longest prefix wins when multiple prefixes match', async () => {
+  const m = load();
+  m.configure({ global: { order: 'cheapest' }, providers: { anthropic: {
+    include: '^claude-', exclude: 'instant', fallback: 'claude-haiku-4-5',
+    knownPrices: { 'claude-haiku': 2.00, 'claude-haiku-4': 1.00 },
+  }}});
+  mockNet({ [AN]: { data: [{ id: 'claude-haiku-4-5', created_at: '2025-10-01T00:00:00Z' }] } });
+  const ev = await m.inspectModels('anthropic', 'k');
+  assert.equal(ev.candidates[0].priceIn, 1.00, 'longer prefix claude-haiku-4 wins over claude-haiku');
+});
+
+test('knownPrices: Gemini flash chosen over pro by price', async () => {
+  const m = load();
+  m.configure({ global: { order: 'cheapest' }, providers: { gemini: {
+    include: 'gemini-', exclude: 'lite|embedding|aqa|imagen|veo|tts|live|image|audio',
+    fallback: 'gemini-flash-latest',
+    knownPrices: {
+      source: 'maintained', updated: '2026-09-29',
+      models: { 'gemini-2.5-flash': { input: 0.075, output: 0.30 }, 'gemini-2.5-pro': { input: 1.25, output: 5.00 } }
+    },
+  }}});
+  mockNet({ [GE]: { models: [
+    { name: 'models/gemini-2.5-pro',   supportedGenerationMethods: ['generateContent'] },
+    { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+  ] } });
+  const ev = await m.inspectModels('gemini', 'k');
+  assert.equal(ev.id, 'gemini-2.5-flash');
+  assert.equal(ev.orderedBy, 'cheapest');
+  assert.equal(ev.candidates.find(c => c.id === 'gemini-2.5-flash').priceIn, 0.075);
+});
+
+test('economy profile uses cheapest for all three paid providers', async () => {
+  const m = load(); m.useProfile('economy');
+  mockNet({
+    [AN]: { data: [
+      { id: 'claude-opus-5',    created_at: '2026-04-01T00:00:00Z' },
+      { id: 'claude-haiku-4-5', created_at: '2025-10-01T00:00:00Z' },
+    ]},
+    [GE]: { models: [
+      { name: 'models/gemini-2.5-pro',   supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+    ]},
+    [XL]: { models: [
+      { id: 'grok-4.7',    created: MAY+200, prompt_text_token_price: 20000 },
+      { id: 'grok-4-fast', created: MAR,     prompt_text_token_price: 2000  },
+    ]},
+  });
+  const xai   = await m.resolveModel('xai',       'k');
+  const ant   = await m.resolveModel('anthropic', 'k');
+  const gem   = await m.resolveModel('gemini',    'k');
+  assert.equal(xai.id,  'grok-4-fast',      'xAI: cheapest by API price');
+  assert.equal(ant.id,  'claude-haiku-4-5', 'Anthropic: cheapest by knownPrices');
+  assert.equal(gem.id,  'gemini-2.5-flash', 'Gemini: cheapest by knownPrices');
+  assert.equal(xai.orderedBy, 'cheapest');
+  assert.equal(ant.orderedBy, 'cheapest');
+  assert.equal(gem.orderedBy, 'cheapest');
+});
+
+// ── provenance fields + rich knownPrices structure ─────────────────────────
+
+test('xAI entry: priceSource=provider-api, priceConfidence=live, priceOut captured', async () => {
+  const m = load(); m.useProfile('economy');
+  mockNet({ [XL]: { models: [
+    { id: 'grok-4-fast', created: MAR, prompt_text_token_price: 2000, completion_text_token_price: 5000 },
+  ]} });
+  const ev = await m.inspectModels('xai', 'k');
+  const c = ev.candidates[0];
+  assert.equal(c.priceIn,         0.20);
+  assert.equal(c.priceOut,        0.50);
+  assert.equal(c.priceSource,     'provider-api');
+  assert.equal(c.priceConfidence, 'live');
+  assert.equal(c.priceUpdated,    null);
+});
+
+test('Anthropic entry: priceSource=maintained, priceConfidence=maintained, priceUpdated set', async () => {
+  const m = load(); m.useProfile('economy');
+  mockNet({ [AN]: { data: [
+    { id: 'claude-haiku-4-5', created_at: '2025-10-01T00:00:00Z' },
+    { id: 'claude-opus-5',    created_at: '2026-04-01T00:00:00Z' },
+  ]} });
+  const ev = await m.inspectModels('anthropic', 'k');
+  assert.equal(ev.id,         'claude-haiku-4-5');
+  assert.equal(ev.orderedBy,  'cheapest');
+  const haiku = ev.candidates.find(c => c.id === 'claude-haiku-4-5');
+  assert.equal(haiku.priceIn,         1.00);
+  assert.equal(haiku.priceOut,        5.00);
+  assert.equal(haiku.priceSource,     'maintained');
+  assert.equal(haiku.priceConfidence, 'maintained');
+  assert.equal(haiku.priceUpdated,    '2026-09-29');   // matches economy.yml updated date
+  const opus = ev.candidates.find(c => c.id === 'claude-opus-5');
+  assert.equal(opus.priceIn,  15.00);
+  assert.equal(opus.priceOut, 75.00);
+});
+
+test('rich knownPrices: input/output both parsed; legacy flat form still works', async () => {
+  const m = load();
+  // Rich form
+  m.configure({ global: { order: 'cheapest' }, providers: { anthropic: {
+    include: '^claude-', exclude: 'instant', fallback: 'claude-haiku-4-5',
+    knownPrices: { source: 'maintained', updated: '2026-01-01', models: { 'claude-haiku-4': { input: 1.00, output: 5.00 } } },
+  }}});
+  mockNet({ [AN]: { data: [{ id: 'claude-haiku-4-5', created_at: '2025-10-01T00:00:00Z' }] } });
+  let ev = await m.inspectModels('anthropic', 'k');
+  assert.equal(ev.candidates[0].priceIn, 1.00); assert.equal(ev.candidates[0].priceOut, 5.00);
+
+  // Legacy flat form
+  m.configure({ global: { order: 'cheapest' }, providers: { anthropic: {
+    include: '^claude-', exclude: 'instant', fallback: 'claude-haiku-4-5',
+    knownPrices: { 'claude-haiku-4-5': 1.00 },
+  }}});
+  mockNet({ [AN]: { data: [{ id: 'claude-haiku-4-5', created_at: '2025-10-01T00:00:00Z' }] } });
+  ev = await m.inspectModels('anthropic', 'k');
+  assert.equal(ev.candidates[0].priceIn, 1.00); assert.equal(ev.candidates[0].priceOut, 0);
+});
+
+test('warning emitted when cheapest requested but no price data at all', async () => {
+  const m = load();
+  m.configure({ global: { order: 'cheapest' }, providers: { anthropic: { include: '^claude-', fallback: 'claude-sonnet-5' } } });
+  mockNet({ [AN]: { data: [{ id: 'claude-opus-5', created_at: '2026-04-01T00:00:00Z' }] } });
+  const warnings = [];
+  const orig = process.emitWarning.bind(process);
+  process.emitWarning = (msg, opts) => warnings.push(msg);
+  try { await m.resolveModel('anthropic', 'k'); }
+  finally { process.emitWarning = orig; }
+  assert.ok(warnings.some(w => /PRICE_UNAVAILABLE|cheapest/.test(w)), 'expected a price-unavailable warning');
+});
+
+test('no warning when price data IS available (xAI provider-api case)', async () => {
+  const m = load(); m.useProfile('economy');
+  mockNet({ [XL]: { models: [{ id: 'grok-4-fast', created: MAR, prompt_text_token_price: 2000 }] } });
+  const warnings = [];
+  const orig = process.emitWarning.bind(process);
+  process.emitWarning = (msg) => warnings.push(msg);
+  try { await m.resolveModel('xai', 'k'); }
+  finally { process.emitWarning = orig; }
+  assert.equal(warnings.filter(w => /PRICE_UNAVAILABLE/.test(w)).length, 0);
 });

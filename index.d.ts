@@ -4,11 +4,24 @@ export type Provider  = 'xai' | 'anthropic' | 'gemini' | 'openrouter';
 export type ResolveSource = 'live' | 'pinned' | 'fallback';
 export type OrderedBy = 'created' | 'version' | 'provider';
 
+export interface KnownPriceEntry {
+  input:  number;
+  output: number;
+}
+
+export interface KnownPrices {
+  source?:  string;    // 'maintained' or custom label
+  updated?: string;    // ISO date string: when prices were last verified
+  models:   Record<string, KnownPriceEntry>;
+}
+
 export interface ProviderConfig {
-  pin?:      string | null;
-  include?:  RegExp | null;
-  exclude?:  RegExp | null;
-  fallback?: string;
+  pin?:         string | null;
+  include?:     RegExp | null;
+  exclude?:     RegExp | null;
+  fallback?:    string;
+  /** Maintained price table for providers whose /models API doesn't return pricing. */
+  knownPrices?: KnownPrices | Record<string, number>;   // rich or legacy flat form
 }
 
 export interface GlobalConfig {
@@ -38,12 +51,25 @@ export interface ResolveResult {
 
 export type CandidateStatus = 'chosen' | 'eligible' | 'excluded' | 'not-matching' | 'known-bad';
 
+export type PriceSource     = 'provider-api' | 'maintained';
+export type PriceConfidence = 'live' | 'maintained';
+
 export interface Candidate {
-  id:         string;
-  created:    string | null;
-  generation: string | null;
-  status:     CandidateStatus;
-  rank:       number | null;
+  id:               string;
+  created:          string | null;
+  generation:       string | null;
+  /** Effective input price in USD per million tokens (basis for cheapest ordering). */
+  priceIn:          number | null;
+  /** Output price in USD per million tokens (informational; not used for ordering). */
+  priceOut:         number | null;
+  /** Where the price came from: live provider API, or the maintained knownPrices table. */
+  priceSource:      PriceSource | null;
+  /** 'live' = from provider API at fetch time; 'maintained' = from YAML table. */
+  priceConfidence:  PriceConfidence | null;
+  /** ISO date string: when the knownPrices entry was last verified. null for provider-api. */
+  priceUpdated:     string | null;
+  status:           CandidateStatus;
+  rank:             number | null;
 }
 
 export type FallbackReason = 'no-key' | 'fetch-failed' | 'cooldown' | 'empty-list' | 'all-known-bad' | 'error';
