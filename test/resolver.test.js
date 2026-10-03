@@ -249,3 +249,67 @@ test('unknown env profile emits warning, falls back to settings.yml profile', ()
   // should have fallen back to settings.yml (economy)
   assert.ok(!m.effectiveConfig('xai').exclude.test('grok-4-fast'), 'fell back to economy from settings.yml');
 });
+
+// ── order: cheapest ────────────────────────────────────────────────────────
+
+test('cheapest: picks the model with the lowest priceIn, not the newest', async () => {
+  const m = load();
+  m.configure({ global: { order: 'cheapest' }, providers: { xai: { include: '^grok-', exclude: 'non-?reasoning|image|video', fallback: 'grok-4.3' } } });
+  // grok-4.7 is newest but most expensive; grok-4-fast is cheapest
+  mockNet({ [XL]: { models: [
+    { id: 'grok-4.7',    created: MAY+200, prompt_text_token_price: 20000 },   // $2.00/M
+    { id: 'grok-4.3',   created: MAY,     prompt_text_token_price: 12500 },   // $1.25/M
+    { id: 'grok-4-fast', created: MAR,    prompt_text_token_price: 2000  },   // $0.20/M
+  ] } });
+  const ev = await m.inspectModels('xai', 'k');
+  assert.equal(ev.id, 'grok-4-fast');
+  assert.equal(ev.orderedBy, 'cheapest');
+});
+
+test('cheapest: grok-4.7 ranked last (most expensive), grok-4-fast chosen', async () => {
+  const m = load(); m.useProfile('economy');
+  mockNet({ [XL]: { models: [
+    { id: 'grok-4.7',    created: MAY+200, prompt_text_token_price: 20000 },
+    { id: 'grok-4.3',   created: MAY,     prompt_text_token_price: 12500 },
+    { id: 'grok-4-fast', created: MAR,    prompt_text_token_price: 2000  },
+  ] } });
+  const ev = await m.inspectModels('xai', 'k');
+  assert.equal(ev.id, 'grok-4-fast');
+  // grok-4.7 still eligible by name rules, but ranked last by price
+  const byId = Object.fromEntries(ev.candidates.map(c => [c.id, c]));
+  assert.ok(byId['grok-4.7'].rank > byId['grok-4.3'].rank, 'grok-4.7 ranked lower than 4.3');
+  assert.ok(byId['grok-4.3'].rank > byId['grok-4-fast'].rank, 'grok-4.3 ranked lower than 4-fast');
+  assert.equal(byId['grok-4-fast'].priceIn, 0.20);
+  assert.equal(byId['grok-4.7'].priceIn, 2.00);
+});
+
+test('cheapest: models with no price data sort after priced ones', async () => {
+  const m = load();
+  // No exclude so both models are eligible; the one with price data should win
+  m.configure({ global: { order: 'cheapest' }, providers: { xai: { include: '^grok-', exclude: 'NOMATCH', fallback: 'grok-4' } } });
+  mockNet({ [XL]: { models: [
+    { id: 'grok-new-mystery',  created: MAY+999 },                              // no price
+    { id: 'grok-4-fast',       created: MAR,    prompt_text_token_price: 2000 },
+  ] } });
+  assert.equal((await m.resolveModel('xai', 'k')).id, 'grok-4-fast');
+});
+
+test('cheapest: falls back to provider order when no model has price data', async () => {
+  const m = load();
+  m.configure({ global: { order: 'cheapest' }, providers: { xai: { include: '^grok-', fallback: 'grok-4' } } });
+  mockNet({ [XL]: { models: [{ id: 'grok-a', created: MAY }, { id: 'grok-b', created: MAR }] } });
+  const r = await m.resolveModel('xai', 'k');
+  assert.equal(r.id, 'grok-a');          // no price data → provider order kept
+  assert.equal(r.orderedBy, 'provider');
+});
+
+test('flagship profile still uses newest order, not cheapest', async () => {
+  const m = load(); m.useProfile('flagship');
+  mockNet({ [XL]: { models: [
+    { id: 'grok-4.7', created: MAY+200, prompt_text_token_price: 20000 },
+    { id: 'grok-4.3', created: MAY,     prompt_text_token_price: 12500 },
+  ] } });
+  const r = await m.resolveModel('xai', 'k');
+  assert.equal(r.id, 'grok-4.7');        // flagship picks newest, regardless of price
+  assert.equal(r.orderedBy, 'created');
+});

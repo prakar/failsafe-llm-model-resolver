@@ -5,13 +5,12 @@ module.exports = {
   "global": {
     "timeoutMs": 300000,
     "cooldownMs": 60000,
-    "order": "newest"
+    "order": "cheapest"
   },
   "providers": {
     "xai": {
       "include": "^grok-",
-      "exclude": "(?:^|[.-])reasoning|non-?reasoning|image|imagine|video|code-fast",
-      "pin": "grok-4.3",
+      "exclude": "non-?reasoning|image|imagine|video|code-fast",
       "fallback": "grok-4.3"
     },
     "anthropic": {

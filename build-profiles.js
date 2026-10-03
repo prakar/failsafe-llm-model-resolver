@@ -12,8 +12,7 @@ const dir     = path.join(__dirname, 'profiles');
 const banner  = '// Generated from {name}.yml — do not edit directly.\n// Edit {name}.yml then run: node build-profiles.js\n';
 
 let built = 0;
-const SKIP = new Set(['settings.yml']);
-for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.yml') && !SKIP.has(f))) {
+for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.yml'))) {
   const name = f.replace('.yml','');
   const raw  = jsyaml.load(fs.readFileSync(path.join(dir, f), 'utf8'));
   const code = banner.replace(/{name}/g, name) +

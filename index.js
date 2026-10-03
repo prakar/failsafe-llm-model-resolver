@@ -100,7 +100,7 @@ function configure(raw) {
   const merged = {
     timeoutMs:  _positive(g.timeoutMs)  || _BUILT_IN.timeoutMs,
     cooldownMs: _positive(g.cooldownMs) || _BUILT_IN.cooldownMs,
-    order:      ['newest','oldest','provider'].includes(g.order) ? g.order : _BUILT_IN.order,
+    order:      ['newest','oldest','cheapest','provider'].includes(g.order) ? g.order : _BUILT_IN.order,
     providers:  {},
   };
 
@@ -223,7 +223,11 @@ function geminiGen(id) {
 
 async function fetchXaiModels(apiKey, timeoutMs) {
   const headers  = { Authorization: `Bearer ${apiKey}` };
-  const toEntry  = m => { const id = m && (m.id || m.name); return id ? { id, created: toMs(m.created), generation: null } : null; };
+  // prompt_text_token_price is in 100-picodollar units per token.
+  // Dividing by 1e4 gives USD per million tokens input, matching the prices you see on
+  // xAI's pricing page. The economy profile uses this to pick the cheapest eligible model.
+  const xaiPrice = m => (typeof m.prompt_text_token_price === 'number') ? m.prompt_text_token_price / 1e4 : null;
+  const toEntry  = m => { const id = m && (m.id || m.name); return id ? { id, created: toMs(m.created), generation: null, priceIn: xaiPrice(m) } : null; };
   try {
     const json    = await httpGet('https://api.x.ai/v1/language-models', headers, timeoutMs);
     const entries = (json.models || json.data || []).map(toEntry).filter(Boolean);
@@ -267,6 +271,22 @@ function cmpVer(a, b) {
 }
 
 function orderCandidates(entries, mode) {
+  // 'cheapest': sort by priceIn ascending; models with no price data sort last.
+  // This uses the actual API-reported price, not a name heuristic, so a new expensive
+  // model that doesn't say "reasoning" in its name is still ranked correctly.
+  if (mode === 'cheapest') {
+    const has = entries.some(e => e.priceIn != null);
+    if (!has) return { ordered: entries.slice(), orderedBy: 'provider' };
+    const decorated = entries.map((e, i) => ({ e, i }));
+    decorated.sort((a, b) => {
+      const pa = a.e.priceIn, pb = b.e.priceIn;
+      if (pa == null && pb == null) return a.i - b.i;
+      if (pa == null) return  1;
+      if (pb == null) return -1;
+      return (pa - pb) || a.i - b.i;
+    });
+    return { ordered: decorated.map(x => x.e), orderedBy: 'cheapest' };
+  }
   let signal = 'provider';
   if (mode !== 'provider') {
     if      (entries.some(e => e.created    != null)) signal = 'created';
@@ -382,7 +402,7 @@ async function evaluate(provider, apiKey, options) {
       else if (rules.include && !rules.include.test(e.id))    status = 'not-matching';
       else if (rules.exclude &&  rules.exclude.test(e.id))    status = 'excluded';
       else                                                     status = 'eligible';
-      return { id: e.id, created: e.created ? new Date(e.created).toISOString() : null, generation: e.generation?.join('.') || null, status, rank: rankOf.get(e.id) || null };
+      return { id: e.id, created: e.created ? new Date(e.created).toISOString() : null, generation: e.generation?.join('.') || null, priceIn: e.priceIn ?? null, status, rank: rankOf.get(e.id) || null };
     }).sort((a, b) => (_GRP[a.status] - _GRP[b.status]) || ((a.rank||1e9) - (b.rank||1e9)));
 
     if (sel?.chosen) {
